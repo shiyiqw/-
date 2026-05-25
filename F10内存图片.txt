@@ -14,24 +14,22 @@ namespace shiyi_mod
         public override void Load()
         {
             System.Console.OutputEncoding = System.Text.Encoding.UTF8;
-            Log.LogInfo("[Shiyi] 提取器已启动！进游戏看到画面后，按 F10 键开始偷图！");
+            Log.LogInfo("[Shiyi] 按下F10进行Dumper");
             AddComponent<SpriteDumper>();
         }
     }
 
     public class SpriteDumper : MonoBehaviour
     {
-        // 修复 1: 换回原生的 Windows API 监听，彻底抛弃 UnityEngine.Input
         [DllImport("user32.dll")]
         public static extern short GetAsyncKeyState(int vKey);
-        private const int VK_F10 = 0x79; // F10 键的 Windows 键码
+        private const int VK_F10 = 0x79;
         private bool _lastKeyState = false;
 
         public static string DumpFolder = Path.Combine(Paths.PluginPath, "ShiyiCustomTexture", "SpriteDump");
 
         void Update()
         {
-            // 原生按键检测
             bool isDown = (GetAsyncKeyState(VK_F10) & 0x8000) != 0;
             if (isDown && !_lastKeyState)
             {
@@ -44,9 +42,7 @@ namespace shiyi_mod
         {
             if (!Directory.Exists(DumpFolder)) Directory.CreateDirectory(DumpFolder);
 
-            System.Console.WriteLine("[Shiyi-解包器] 开始抓取当前内存中的贴图...");
-
-            // 修复 2: 删除了不支持泛型的 LoadAll，直接抓取当前屏幕和内存中已经存在的资源
+            System.Console.WriteLine("Has Been Start");
             var allSprites = Resources.FindObjectsOfTypeAll<Sprite>();
             int successCount = 0;
             HashSet<string> savedNames = new HashSet<string>();
@@ -54,8 +50,6 @@ namespace shiyi_mod
             foreach (var sprite in allSprites)
             {
                 if (sprite == null || sprite.texture == null) continue;
-
-                // 过滤掉太小的无用像素点
                 if (sprite.rect.width < 10 || sprite.rect.height < 10) continue;
 
                 string baseName = string.IsNullOrEmpty(sprite.name) ? "unnamed_sprite" : sprite.name;
@@ -78,22 +72,21 @@ namespace shiyi_mod
                     
                     if (croppedTex != null)
                     {
-                        // 修复 3: IL2CPP 环境下，不用 ImageConversion，直接使用 Texture2D 的扩展方法
                         byte[] bytes = croppedTex.EncodeToPNG();
                         File.WriteAllBytes(filePath, bytes);
                         
-                        UnityEngine.Object.Destroy(croppedTex); // 释放内存
+                        UnityEngine.Object.Destroy(croppedTex);
                         successCount++;
                     }
                 }
                 catch 
                 {
-                    // 忽略切割失败的报错
+
                 }
             }
 
-            System.Console.WriteLine($"[Shiyi-解包器] 提取完成！成功保存了 {successCount} 个元素！");
-            System.Console.WriteLine($"[Shiyi-解包器] 路径: {DumpFolder}");
+            System.Console.WriteLine($"Dumper Successful {successCount} 元素");
+            System.Console.WriteLine($"Path :{DumpFolder}");
         }
 
         private static Texture2D CropSpriteToTexture(Sprite sprite)

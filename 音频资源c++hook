@@ -5,15 +5,6 @@
 
 extern "C" __declspec(selectany) IMAGE_DOS_HEADER __ImageBase;
 
-// ==============================
-//  最小 IL2CPP / Unity 结构声明
-//  这里只保留当前 hook 需要的内容，
-//  不再直接 include 巨大的 il2cpp.h，避免：
-//  - HKEY_CLASSES_ROOT 等 Windows 宏污染
-//  - stdin/stdout/stderr 宏污染
-//  - dump 头文件里匿名结构/保留字导致的编译错误
-// ==============================
-
 struct System_String_o;
 struct Utage_AssetFileUtage_o;
 
@@ -29,10 +20,6 @@ struct System_String_o
     void* monitor;
     System_String_Fields fields;
 };
-
-// 已知 RVA（来自 dump.cs）
-// AssetFileUtage.ParseLoadPath = 0x3BCE40
-// AssetFileUtage.LoadResource  = 0x3C3910
 
 using il2cpp_string_new_utf16_t = System_String_o* (*)(const wchar_t*, int);
 static il2cpp_string_new_utf16_t g_il2cpp_string_new_utf16 = nullptr;

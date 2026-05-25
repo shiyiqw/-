@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("shiyi_mod")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+6a8bde25ecca430c967b6b59ef3f5ca9e1fb0cf4")]
 [assembly: System.Reflection.AssemblyProductAttribute("shiyi_mod")]
 [assembly: System.Reflection.AssemblyTitleAttribute("shiyi_mod")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

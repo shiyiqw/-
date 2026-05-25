@@ -13,7 +13,7 @@ namespace shiyi_mod
         public override void Load()
         {
             Console.OutputEncoding = Encoding.UTF8;
-            Log.LogInfo("=== 暴力原生加载版 Mod 加载成功 ===");
+            Log.LogInfo("Shiyi已经加载");
             AddComponent<NativeAudioPlayer>();
         }
     }
@@ -67,8 +67,6 @@ namespace shiyi_mod
             for (int i = 0; i < wavData.Length; i++) {
                 wavData[i] = BitConverter.ToInt16(bytes, pos + i * 2) / 32768.0f;
             }
-
-            // 使用 AudioClip.Create，这个方法在 IL2CPP 中非常稳定
             AudioClip clip = AudioClip.Create(Path.GetFileName(filePath), wavData.Length / channels, channels, frequency, false);
             clip.SetData(wavData, 0);
 
