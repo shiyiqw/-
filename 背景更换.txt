@@ -1,0 +1,169 @@
+using BepInEx;
+
+using BepInEx.Unity.IL2CPP;
+
+using HarmonyLib;
+
+using UnityEngine;
+
+using System.IO;
+
+using UnityEngine.UI;
+
+using System.Collections.Generic;
+
+
+
+namespace shiyi_mod
+
+{
+
+    [BepInPlugin("com.shiyi.mod", "Shiyi Texture Replacer", "1.0.0")]
+
+    public class Class1 : BasePlugin
+
+    {
+
+        // 缓存已经加载过的外部贴图，避免重复读取 IO 导致掉帧
+
+        public static Dictionary<string, Texture2D> TextureCache = new Dictionary<string, Texture2D>();
+
+        public static string CustomFolder;
+
+
+
+        public override void Load()
+
+        {
+
+            System.Console.OutputEncoding = System.Text.Encoding.UTF8;
+
+            System.Console.InputEncoding = System.Text.Encoding.UTF8;
+
+            CustomFolder = Path.Combine(Paths.PluginPath, "ShiyiCustomTexture");
+
+            if (!Directory.Exists(CustomFolder)) Directory.CreateDirectory(CustomFolder);
+
+
+
+            Log.LogInfo($"贴图替换插件已启动！请将图片放入: {CustomFolder}");
+
+
+
+            var harmony = new Harmony("com.shiyi.texture.patch");
+
+            harmony.PatchAll();
+
+        }
+
+    }
+
+
+
+    [HarmonyPatch(typeof(CanvasRenderer), "SetTexture")]
+
+    public class TextureHijackPatch
+
+    {
+
+        [HarmonyPrefix]
+
+        public static void Prefix(CanvasRenderer __instance, ref Texture texture)
+
+        {
+
+            if (texture == null) return;
+
+            string objectName = __instance.gameObject.name;
+
+            if (objectName.Contains("Starveling/Texture/BG/"))
+
+            {
+
+                string fileName = Path.GetFileNameWithoutExtension(objectName);
+
+                if (!Class1.TextureCache.TryGetValue(fileName, out Texture2D customTexture))
+
+                {
+
+                    customTexture = LoadExternalTexture(fileName);
+
+                    Class1.TextureCache[fileName] = customTexture;
+
+                }
+
+                if (customTexture != null)
+
+                {
+
+                    texture = customTexture;
+
+                }
+
+            }
+
+        }
+
+
+
+        // 从硬盘加载图片的辅助函数
+
+        private static Texture2D LoadExternalTexture(string name)
+
+        {
+
+            // 支持 png 和 jpg
+
+            string[] extensions = { ".png", ".jpg" };
+
+            foreach (var ext in extensions)
+
+            {
+
+                string fullPath = Path.Combine(Class1.CustomFolder, name + ext);
+
+                if (File.Exists(fullPath))
+
+                {
+
+                    try
+
+                    {
+
+                        byte[] data = File.ReadAllBytes(fullPath);
+
+                        Texture2D tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+
+                        if (ImageConversion.LoadImage(tex, data))
+
+                        {
+
+                            tex.name = name + "_custom";
+
+                            tex.hideFlags = HideFlags.HideAndDontSave;
+
+                            return tex;
+
+                        }
+
+                    }
+
+                    catch (System.Exception e)
+
+                    {
+
+                        System.Console.WriteLine($"[Error] 加载图片 {name} 失败: {e.Message}");
+
+                    }
+
+                }
+
+            }
+
+            return null;
+
+        }
+
+    }
+
+}

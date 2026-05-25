@@ -1,0 +1,9 @@
+﻿#SHEET_NAME,Param
+Label,Type,Value,FileType
+language,String,,System
+voiceLanguage,String,,System
+money,Int,5000
+Helped_Beggar,Bool,FALSE,System
+BeMonk,Bool,FALSE,System
+IsDead,Bool,FALSE,System
+IsMoney,Bool,FALSE,System

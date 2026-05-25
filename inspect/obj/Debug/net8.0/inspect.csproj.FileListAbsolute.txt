@@ -1,0 +1,14 @@
+H:\temp\vs\inspect\bin\Debug\net8.0\inspect.exe
+H:\temp\vs\inspect\bin\Debug\net8.0\inspect.deps.json
+H:\temp\vs\inspect\bin\Debug\net8.0\inspect.runtimeconfig.json
+H:\temp\vs\inspect\bin\Debug\net8.0\inspect.dll
+H:\temp\vs\inspect\bin\Debug\net8.0\inspect.pdb
+H:\temp\vs\inspect\obj\Debug\net8.0\inspect.GeneratedMSBuildEditorConfig.editorconfig
+H:\temp\vs\inspect\obj\Debug\net8.0\inspect.AssemblyInfoInputs.cache
+H:\temp\vs\inspect\obj\Debug\net8.0\inspect.AssemblyInfo.cs
+H:\temp\vs\inspect\obj\Debug\net8.0\inspect.csproj.CoreCompileInputs.cache
+H:\temp\vs\inspect\obj\Debug\net8.0\inspect.dll
+H:\temp\vs\inspect\obj\Debug\net8.0\refint\inspect.dll
+H:\temp\vs\inspect\obj\Debug\net8.0\inspect.pdb
+H:\temp\vs\inspect\obj\Debug\net8.0\inspect.genruntimeconfig.cache
+H:\temp\vs\inspect\obj\Debug\net8.0\ref\inspect.dll

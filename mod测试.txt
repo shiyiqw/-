@@ -1,0 +1,514 @@
+using BepInEx;
+using BepInEx.Unity.IL2CPP;
+using HarmonyLib;
+using Utage;
+using UnityEngine;
+using System;
+using System.IO;
+using System.Text;
+using System.Collections.Generic;
+
+namespace UtageCsvInjectorPlugin
+{
+    [BepInPlugin("com.shiyimv.utage_csv_injector", "Utage CSV Script Injector", "1.5.0")]
+    public class Plugin : BasePlugin
+    {
+        public static Dictionary<string, List<string[]>> CustomSheetsCache = new Dictionary<string, List<string[]>>();
+        public static string DumpFilePath;
+        private static int ExternalVoiceId = 0;
+
+        public override void Load()
+        {
+            Console.OutputEncoding = Encoding.UTF8;
+            Console.InputEncoding = Encoding.UTF8;
+
+            DumpFilePath = Path.Combine(Paths.PluginPath, "ScenarioDump.csv");
+            LoadScenarioDump();
+            CustomVoiceManager.Initialize();
+
+            Harmony harmony = new Harmony("com.shiyimv.utage_csv_injector");
+            harmony.PatchAll();
+
+            UnityEngine.Debug.Log("[Mod] 剧本注入 + 自定义人物语音 已加载");
+        }
+
+        public static void LoadScenarioDump()
+        {
+            try
+            {
+                if (!File.Exists(DumpFilePath)) return;
+                CustomSheetsCache.Clear();
+
+                string currentSheetName = null;
+                List<string[]> currentRows = new List<string[]>();
+                string[] lines = File.ReadAllLines(DumpFilePath, Encoding.UTF8);
+
+                foreach (var line in lines)
+                {
+                    if (string.IsNullOrEmpty(line) || line.Trim().Length == 0) continue;
+
+                    if (line.StartsWith("#SHEET_NAME", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (!string.IsNullOrEmpty(currentSheetName) && currentRows.Count > 0)
+                        {
+                            CustomSheetsCache[currentSheetName] = new List<string[]>(currentRows);
+                        }
+
+                        string[] parts = line.Split(',');
+                        if (parts.Length > 1)
+                        {
+                            currentSheetName = parts[1].Trim();
+                            currentRows.Clear();
+                        }
+                        continue;
+                    }
+
+                    if (!string.IsNullOrEmpty(currentSheetName))
+                    {
+                        string[] cells = line.Split(',');
+                        RewriteExternalVoiceCells(cells);
+                        currentRows.Add(cells);
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(currentSheetName) && currentRows.Count > 0)
+                {
+                    CustomSheetsCache[currentSheetName] = new List<string[]>(currentRows);
+                }
+
+                UnityEngine.Debug.Log($"[Mod] 成功载入自定义剧本，共成功缓存了 {CustomSheetsCache.Count} 张工作表。");
+            }
+            catch (Exception ex)
+            {
+                UnityEngine.Debug.LogError($"[Mod] 载入剧本文件失败: {ex.Message}");
+            }
+        }
+
+        private static void RewriteExternalVoiceCells(string[] cells)
+        {
+            try
+            {
+                if (cells == null || cells.Length < 4) return;
+
+                string command = cells[1]?.Trim();
+                if (!string.Equals(command, "Voice", StringComparison.OrdinalIgnoreCase)) return;
+
+                string fileCell = cells[3]?.Trim();
+                if (string.IsNullOrEmpty(fileCell) || !fileCell.StartsWith("ext:", StringComparison.OrdinalIgnoreCase)) return;
+
+                string token = $"__extvoice_{ExternalVoiceId++}";
+                CustomVoiceManager.RegisterExternalVoiceToken(token, fileCell.Substring(4).Trim());
+                cells[3] = token;
+
+                UnityEngine.Debug.Log($"[CustomVoice] 剧本外部语音已改写: {fileCell} -> {token}");
+            }
+            catch (Exception ex)
+            {
+                UnityEngine.Debug.LogError($"[CustomVoice] 改写剧本外部语音失败: {ex.Message}");
+            }
+        }
+    }
+
+    public static class CustomVoiceManager
+    {
+        // 兜底映射：剧本里没写外部语音时，仍然能用这个默认配置测试
+        private static readonly Dictionary<string, string> CharacterVoiceMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "林翩翩", @"ShiyiAssets_List\Voice\林翩翩\诅咒方知宥.wav" },
+        };
+
+        // 当游戏传进来的角色名为空时，用原始语音资源路径来识别“该不该拦截”。
+        // key 可以写目录前缀，也可以写更完整的文件名片段。
+        private static readonly Dictionary<string, string> SourceVoiceMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            { @"Starveling/Sound/Voice/方知宥/", @"ShiyiAssets_List\Voice\林翩翩\诅咒方知宥.wav" },
+        };
+
+        private const string DefaultVoiceRelativePath = @"ShiyiAssets_List\Voice\林翩翩\诅咒方知宥.wav";
+        private const string ExternalVoicePrefix = "ext:";
+        private const string LegacyLocalVoicePrefix = "L:";
+        private const string ExternalVoiceTokenPrefix = "__extvoice_";
+        private static readonly StringComparison PathComparison = StringComparison.OrdinalIgnoreCase;
+        private static readonly Dictionary<string, string> ExternalVoiceTokenMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, AudioClip> ClipCache = new Dictionary<string, AudioClip>(StringComparer.OrdinalIgnoreCase);
+        private static readonly HashSet<string> MissingPathLogged = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        public static void Initialize()
+        {
+            string fullPath = Path.Combine(Paths.PluginPath, DefaultVoiceRelativePath);
+            UnityEngine.Debug.Log($"[CustomVoice] 默认语音路径: {fullPath}");
+            UnityEngine.Debug.Log("[CustomVoice] 剧本可直接写法: ,Voice,角色名,ext:相对或绝对wav路径");
+            UnityEngine.Debug.Log("[CustomVoice] 示例: ,Voice,林翩翩,ext:ShiyiAssets_List\\Voice\\林翩翩\\诅咒方知宥.wav");
+        }
+
+        public static void RegisterExternalVoiceToken(string token, string actualPath)
+        {
+            if (string.IsNullOrWhiteSpace(token) || string.IsNullOrWhiteSpace(actualPath)) return;
+            ExternalVoiceTokenMap[token.Trim()] = actualPath.Trim();
+        }
+
+        public static bool TryGetClip(string characterLabel, AssetFile assetFile, out AudioClip clip)
+        {
+            clip = null;
+
+            string fileName = GetAssetFileNameSafe(assetFile);
+            bool hasExternalRequest = IsExternalVoiceToken(fileName) || IsExternalVoiceFileName(fileName);
+            bool hasCharacterMapping = !string.IsNullOrEmpty(characterLabel) && CharacterVoiceMap.ContainsKey(characterLabel);
+            bool hasSourceMapping = TryGetMappedVoiceBySource(fileName, out _);
+
+            // 关键修复：
+            // 1. 显式 ext:/L: 请求必须允许拦截。
+            // 2. 角色名可用时按角色映射拦截。
+            // 3. 角色名为空时，按原始语音资源路径匹配拦截。
+            // 4. 其他普通原版语音不处理，避免“谁说话都被替换”。
+            if (!hasExternalRequest && !hasCharacterMapping && !hasSourceMapping)
+            {
+                return false;
+            }
+
+            foreach (var candidate in BuildCandidatePaths(characterLabel, fileName, hasExternalRequest))
+            {
+                if (TryLoadClip(candidate, out clip))
+                {
+                    UnityEngine.Debug.Log($"[CustomVoice] 命中外部语音: role=[{characterLabel}] file=[{fileName}] path=[{candidate}]");
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        public static string GetAssetFileNameSafe(object assetFile)
+        {
+            try
+            {
+                if (assetFile is AssetFile typedAssetFile)
+                {
+                    return typedAssetFile.FileName;
+                }
+
+                if (assetFile is AssetFileBase typedAssetFileBase)
+                {
+                    return typedAssetFileBase.FileName;
+                }
+
+                return null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        public static bool IsExternalVoiceFileName(string fileName)
+        {
+            return !string.IsNullOrEmpty(fileName) &&
+                   (fileName.StartsWith(ExternalVoicePrefix, PathComparison) ||
+                    fileName.StartsWith(LegacyLocalVoicePrefix, PathComparison));
+        }
+
+        public static bool IsExternalVoiceToken(string fileName)
+        {
+            return !string.IsNullOrEmpty(fileName) && fileName.StartsWith(ExternalVoiceTokenPrefix, PathComparison);
+        }
+
+        public static bool IsExternalVoicePath(string loadPath)
+        {
+            return !string.IsNullOrEmpty(loadPath) &&
+                   (loadPath.IndexOf(ExternalVoicePrefix, PathComparison) >= 0 ||
+                    loadPath.IndexOf(LegacyLocalVoicePrefix, PathComparison) >= 0);
+        }
+
+        private static IEnumerable<string> BuildCandidatePaths(string characterLabel, string fileName, bool hasExternalRequest)
+        {
+            if (TryGetMappedVoiceBySource(fileName, out var mappedBySource))
+            {
+                yield return mappedBySource;
+            }
+
+            if (!string.IsNullOrEmpty(fileName))
+            {
+                if (ExternalVoiceTokenMap.TryGetValue(fileName.Trim(), out var tokenPath))
+                {
+                    yield return tokenPath;
+                    if (!Path.HasExtension(tokenPath))
+                    {
+                        yield return tokenPath + ".wav";
+                    }
+                    yield break;
+                }
+
+                if (fileName.StartsWith(ExternalVoicePrefix, PathComparison) || fileName.StartsWith(LegacyLocalVoicePrefix, PathComparison))
+                {
+                    string externalPath = fileName.StartsWith(ExternalVoicePrefix, PathComparison)
+                        ? fileName.Substring(ExternalVoicePrefix.Length).Trim()
+                        : fileName.Substring(LegacyLocalVoicePrefix.Length).Trim();
+
+                    externalPath = externalPath.TrimStart('\\', '/');
+                    if (!string.IsNullOrEmpty(externalPath))
+                    {
+                        yield return externalPath;
+                        if (!Path.HasExtension(externalPath))
+                        {
+                            yield return externalPath + ".wav";
+                        }
+                    }
+                }
+                else if (hasExternalRequest)
+                {
+                    string plainName = fileName.Trim();
+                    if (!string.IsNullOrEmpty(plainName))
+                    {
+                        yield return plainName;
+                        if (!Path.HasExtension(plainName))
+                        {
+                            yield return plainName + ".wav";
+                        }
+
+                        if (!string.IsNullOrEmpty(characterLabel))
+                        {
+                            yield return Path.Combine("ShiyiAssets_List", "Voice", characterLabel, plainName);
+                            if (!Path.HasExtension(plainName))
+                            {
+                                yield return Path.Combine("ShiyiAssets_List", "Voice", characterLabel, plainName + ".wav");
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!string.IsNullOrEmpty(characterLabel) && CharacterVoiceMap.TryGetValue(characterLabel, out var mapped))
+            {
+                yield return mapped;
+            }
+
+            if (hasExternalRequest)
+            {
+                yield return DefaultVoiceRelativePath;
+            }
+        }
+
+        private static bool TryGetMappedVoiceBySource(string fileName, out string mappedPath)
+        {
+            mappedPath = null;
+            if (string.IsNullOrWhiteSpace(fileName)) return false;
+
+            foreach (var pair in SourceVoiceMap)
+            {
+                if (fileName.IndexOf(pair.Key, PathComparison) >= 0)
+                {
+                    mappedPath = pair.Value;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool TryLoadClip(string pathOrRelativePath, out AudioClip clip)
+        {
+            clip = null;
+            if (string.IsNullOrEmpty(pathOrRelativePath)) return false;
+
+            if (ClipCache.TryGetValue(pathOrRelativePath, out clip) && clip != null)
+            {
+                return true;
+            }
+
+            string fullPath = Path.IsPathRooted(pathOrRelativePath)
+                ? pathOrRelativePath
+                : Path.Combine(Paths.PluginPath, pathOrRelativePath);
+
+            if (!File.Exists(fullPath))
+            {
+                if (MissingPathLogged.Add(fullPath))
+                {
+                    UnityEngine.Debug.LogWarning($"[CustomVoice] 未找到候选语音: {fullPath}");
+                }
+                return false;
+            }
+
+            try
+            {
+                clip = LoadWavAsAudioClip(fullPath);
+                if (clip == null) return false;
+
+                ClipCache[pathOrRelativePath] = clip;
+                UnityEngine.Debug.Log($"[CustomVoice] 已加载语音: {fullPath}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                UnityEngine.Debug.LogError($"[CustomVoice] 读取语音失败: {fullPath} | {ex.Message}");
+                return false;
+            }
+        }
+
+        private static AudioClip LoadWavAsAudioClip(string filePath)
+        {
+            byte[] bytes = File.ReadAllBytes(filePath);
+            if (bytes.Length < 44) throw new Exception("WAV 文件长度异常，无法解析");
+
+            int channels = BitConverter.ToInt16(bytes, 22);
+            int frequency = BitConverter.ToInt32(bytes, 24);
+            int bitsPerSample = BitConverter.ToInt16(bytes, 34);
+            if (bitsPerSample != 16) throw new Exception($"当前仅支持 16-bit PCM WAV，检测到 {bitsPerSample}-bit");
+
+            int pos = 12;
+            while (pos + 8 < bytes.Length)
+            {
+                bool isDataChunk = bytes[pos] == 100 && bytes[pos + 1] == 97 && bytes[pos + 2] == 116 && bytes[pos + 3] == 97;
+                if (isDataChunk) break;
+
+                int chunkSize = BitConverter.ToInt32(bytes, pos + 4);
+                pos += 8 + chunkSize;
+            }
+
+            if (pos + 8 >= bytes.Length) throw new Exception("WAV 中未找到 data 数据块");
+
+            pos += 4;
+            int dataSize = BitConverter.ToInt32(bytes, pos);
+            pos += 4;
+
+            int sampleCount = dataSize / 2;
+            float[] wavData = new float[sampleCount];
+            for (int i = 0; i < sampleCount; i++)
+            {
+                wavData[i] = BitConverter.ToInt16(bytes, pos + i * 2) / 32768.0f;
+            }
+
+            AudioClip clip = AudioClip.Create(Path.GetFileNameWithoutExtension(filePath), sampleCount / channels, channels, frequency, false);
+            clip.SetData(wavData, 0);
+            return clip;
+        }
+    }
+
+    [HarmonyPatch(typeof(StringGrid), nameof(StringGrid.Rows), MethodType.Getter)]
+    public class UtageStringGrid_Rows_Patch
+    {
+        private static HashSet<IntPtr> processedGrids = new HashSet<IntPtr>();
+
+        [HarmonyPrefix]
+        public static void Prefix(StringGrid __instance)
+        {
+            if (__instance == null || __instance.Pointer == IntPtr.Zero) return;
+
+            IntPtr gridPtr = __instance.Pointer;
+            if (processedGrids.Contains(gridPtr)) return;
+
+            string sheetName = __instance.SheetName;
+            if (string.IsNullOrEmpty(sheetName)) return;
+
+            if (Plugin.CustomSheetsCache.TryGetValue(sheetName, out var customRows))
+            {
+                processedGrids.Add(gridPtr);
+                UnityEngine.Debug.Log($"[Mod-Debug] 检测到剧情表 [{sheetName}]，开始注入自定义行数据...");
+
+                try
+                {
+                    if (__instance.rows != null)
+                    {
+                        __instance.rows.Clear();
+                    }
+                    else
+                    {
+                        __instance.rows = new Il2CppSystem.Collections.Generic.List<StringGridRow>();
+                    }
+
+                    foreach (var rowData in customRows)
+                    {
+                        var il2cppArray = new Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppStringArray(rowData);
+                        __instance.AddRow(il2cppArray);
+                    }
+
+                    __instance.ParseHeader();
+                    UnityEngine.Debug.Log($"[Mod-Debug] 剧情表 [{sheetName}] 注入成功，新总行数: {__instance.rows.Count}");
+                }
+                catch (Exception ex)
+                {
+                    UnityEngine.Debug.LogError($"[Mod-Debug] 动态注入行数据时发生异常: {ex.Message}");
+                }
+            }
+        }
+    }
+
+
+    [HarmonyPatch(typeof(SoundManager), nameof(SoundManager.PlayVoice), new Type[] { typeof(string), typeof(AssetFile) })]
+    public class SoundManager_PlayVoice_AssetFile_0_Patch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(SoundManager __instance, string __0, AssetFile __1)
+        {
+            return CustomVoicePatcher.TryReplaceVoice(__instance, __0, __1, false, 0f, 0f);
+        }
+    }
+
+    [HarmonyPatch(typeof(SoundManager), nameof(SoundManager.PlayVoice), new Type[] { typeof(string), typeof(AssetFile), typeof(bool) })]
+    public class SoundManager_PlayVoice_AssetFile_1_Patch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(SoundManager __instance, string __0, AssetFile __1, bool __2)
+        {
+            return CustomVoicePatcher.TryReplaceVoice(__instance, __0, __1, __2, 0f, 0f);
+        }
+    }
+
+    [HarmonyPatch(typeof(SoundManager), nameof(SoundManager.PlayVoice), new Type[] { typeof(string), typeof(AssetFile), typeof(float), typeof(bool) })]
+    public class SoundManager_PlayVoice_AssetFile_2_Patch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(SoundManager __instance, string __0, AssetFile __1, float __2, bool __3)
+        {
+            return CustomVoicePatcher.TryReplaceVoice(__instance, __0, __1, __3, __2, 0f);
+        }
+    }
+
+    [HarmonyPatch(typeof(SoundManager), nameof(SoundManager.PlayVoice), new Type[] { typeof(string), typeof(AssetFile), typeof(float), typeof(bool), typeof(float), typeof(float) })]
+    public class SoundManager_PlayVoice_AssetFile_3_Patch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(SoundManager __instance, string __0, AssetFile __1, float __2, bool __3, float __4, float __5)
+        {
+            return CustomVoicePatcher.TryReplaceVoice(__instance, __0, __1, __3, __2, __4, __5);
+        }
+    }
+
+    [HarmonyPatch(typeof(SoundManager), nameof(SoundManager.PlayVoice), new Type[] { typeof(string), typeof(AssetFile), typeof(float), typeof(float) })]
+    public class SoundManager_PlayVoice_AssetFile_4_Patch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(SoundManager __instance, string __0, AssetFile __1, float __2, float __3)
+        {
+            return CustomVoicePatcher.TryReplaceVoice(__instance, __0, __1, false, -1f, __2, __3, true);
+        }
+    }
+
+    public static class CustomVoicePatcher
+    {
+        public static bool TryReplaceVoice(SoundManager soundManager, string characterLabel, AssetFile assetFile, bool isLoop, float volume, float fadeInTime, float fadeOutTime = 0f, bool useEngineDefaultVolume = false)
+        {
+            try
+            {
+                if (soundManager == null) return true;
+
+                if (!CustomVoiceManager.TryGetClip(characterLabel, assetFile, out var clip) || clip == null)
+                {
+                    return true;
+                }
+
+                float finalVolume = useEngineDefaultVolume || volume < 0f ? soundManager.VoiceVolume : volume;
+                if (finalVolume <= 0f) finalVolume = soundManager.VoiceVolume;
+                if (fadeOutTime < 0f) fadeOutTime = 0f;
+
+                soundManager.PlayVoice(characterLabel, clip, isLoop, finalVolume, fadeInTime);
+                UnityEngine.Debug.Log($"[CustomVoice] 已替换语音 -> 角色: [{characterLabel ?? "<null>"}] 音量: {finalVolume} 淡入: {fadeInTime}");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                UnityEngine.Debug.LogError($"[CustomVoice] 替换语音失败: {ex.Message}");
+                return true;
+            }
+        }
+    }
+}

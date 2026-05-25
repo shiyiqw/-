@@ -1,0 +1,176 @@
+using BepInEx;
+using BepInEx.Unity.IL2CPP;
+using UnityEngine;
+using UnityEngine.UI;
+using System.IO;
+using System.Collections.Generic;
+
+namespace shiyi_mod
+{
+    [BepInPlugin("com.shiyi.mod", "Shiyi.Ultimate.Sync", "4.0.0")]
+    public class Class1 : BasePlugin
+    {
+        // 路径与配置
+        public static string CustomFolder = Path.Combine(Paths.PluginPath, "ShiyiCustomTexture");
+        private const string IMG_A = "王家大院";
+        private const string IMG_B = "连雁";
+        private const float FADE_SPEED = 1.5f; // 渐变速度
+
+        // 状态变量
+        public static bool IsEnabled = false;
+        private static string _currentImg = IMG_A;
+        private static string _nextImg = "";
+        private static float _fadeAlpha = 0f;
+
+        // 物体引用
+        private static GameObject _layerBase = null;
+        private static GameObject _layerFade = null;
+        private static Dictionary<string, Texture2D> _cache = new Dictionary<string, Texture2D>();
+
+        public override void Load()
+        {
+            if (!Directory.Exists(CustomFolder)) Directory.CreateDirectory(CustomFolder);
+            Log.LogInfo("[Shiyi] 终极同步模式已启动！F8开关，F10丝滑切换。");
+            AddComponent<PluginUpdateHandler>();
+        }
+
+        public static void UpdateTick()
+        {
+            if (!IsEnabled) { Cleanup(); return; }
+
+            // 1. 定位 Utage 背景层
+            GameObject bgContainer = GameObject.Find("AdvEngine/GraphicManager/BG");
+            if (bgContainer == null) return;
+
+            // 2. 确保双层画布存在
+            if (_layerBase == null) _layerBase = CreateOverlay("Shiyi_Base", bgContainer.transform);
+            if (_layerFade == null) _layerFade = CreateOverlay("Shiyi_Fade", bgContainer.transform);
+
+            // 3. 核心：渐变逻辑状态机
+            if (!string.IsNullOrEmpty(_nextImg))
+            {
+                // 正在渐变中...
+                _layerFade.SetActive(true);
+                _fadeAlpha += Time.deltaTime * FADE_SPEED;
+
+                SetLayerData(_layerBase, _currentImg, 1f);
+                SetLayerData(_layerFade, _nextImg, _fadeAlpha);
+
+                // 渐变完成瞬间的“无缝衔接”处理
+                if (_fadeAlpha >= 1f)
+                {
+                    _currentImg = _nextImg;
+                    _nextImg = "";
+                    _fadeAlpha = 0f;
+                    SetLayerData(_layerBase, _currentImg, 1f); // 底层瞬间换成新图，保底
+                    _layerFade.SetActive(false); // 功成身退
+                    System.Console.WriteLine($"[Shiyi] 切换完成，当前: {_currentImg}");
+                }
+            }
+            else
+            {
+                // 静态锁定模式
+                SetLayerData(_layerBase, _currentImg, 1f);
+                _layerFade.SetActive(false);
+            }
+
+            // 4. 置顶并静默原生背景 (确保我们的图层在最前且原生背景不穿帮)
+            _layerBase.transform.SetAsLastSibling();
+            if (_layerFade.activeSelf) _layerFade.transform.SetAsLastSibling();
+            
+            SilenceNativeBGs(bgContainer.transform);
+        }
+
+        // --- 功能函数 ---
+
+        public static void RequestSwitch()
+        {
+            if (!IsEnabled || !string.IsNullOrEmpty(_nextImg)) return;
+            _nextImg = (_currentImg == IMG_A) ? IMG_B : IMG_A;
+            _fadeAlpha = 0f;
+            // 预加载下一张图，防止切的时候卡顿
+            GetTex(_nextImg);
+        }
+
+        private static void SetLayerData(GameObject go, string fileName, float alpha)
+        {
+            Texture2D tex = GetTex(fileName);
+            if (tex == null || go == null) return;
+
+            var raw = go.GetComponent<RawImage>();
+            if (raw.texture == null || raw.texture.name != tex.name)
+            {
+                raw.texture = tex;
+                raw.color = Color.white;
+            }
+            go.GetComponent<CanvasRenderer>().SetAlpha(Mathf.Clamp01(alpha));
+            go.SetActive(true);
+        }
+
+        private static GameObject CreateOverlay(string name, Transform parent)
+        {
+            GameObject go = new GameObject(name);
+            go.transform.SetParent(parent, false);
+            var raw = go.AddComponent<RawImage>();
+            // 使用内建 UI Shader 解决白块问题
+            raw.material = new Material(Shader.Find("UI/Default"));
+            raw.raycastTarget = false; 
+            var rect = go.GetComponent<RectTransform>();
+            rect.anchorMin = Vector2.zero; rect.anchorMax = Vector2.one;
+            rect.offsetMin = Vector2.zero; rect.offsetMax = Vector2.zero;
+            return go;
+        }
+
+        private static void SilenceNativeBGs(Transform parent)
+        {
+            for (int i = 0; i < parent.childCount; i++)
+            {
+                var child = parent.GetChild(i);
+                if (child.gameObject != _layerBase && child.gameObject != _layerFade)
+                {
+                    var cr = child.GetComponent<CanvasRenderer>();
+                    if (cr != null) cr.SetAlpha(0f);
+                }
+            }
+        }
+
+        private static Texture2D GetTex(string name)
+        {
+            if (_cache.TryGetValue(name, out var t) && t != null) return t;
+            foreach (var ext in new[] { ".jpg", ".png" })
+            {
+                string p = Path.Combine(CustomFolder, name + ext);
+                if (File.Exists(p))
+                {
+                    byte[] d = File.ReadAllBytes(p);
+                    Texture2D tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                    ImageConversion.LoadImage(tex, d);
+                    tex.name = name + "_custom";
+                    _cache[name] = tex;
+                    return tex;
+                }
+            }
+            return null;
+        }
+
+        private static void Cleanup()
+        {
+            if (_layerBase != null) { Object.Destroy(_layerBase); _layerBase = null; }
+            if (_layerFade != null) { Object.Destroy(_layerFade); _layerFade = null; }
+            _cache.Clear();
+            _nextImg = "";
+        }
+    }
+
+    public class PluginUpdateHandler : MonoBehaviour
+    {
+        void Update()
+        {
+            if (Input.GetKeyDown(KeyCode.F8)) Class1.IsEnabled = !Class1.IsEnabled;
+            if (Input.GetKeyDown(KeyCode.F10)) Class1.RequestSwitch();
+        }
+
+        // 使用 LateUpdate 确保在 Utage 引擎渲染后执行劫持
+        void LateUpdate() => Class1.UpdateTick();
+    }
+}

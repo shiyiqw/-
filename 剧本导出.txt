@@ -1,0 +1,228 @@
+using BepInEx;
+using BepInEx.Unity.IL2CPP;
+using BepInEx.Logging;
+using UnityEngine;
+using System;
+using System.IO;
+using System.Text;
+using System.Reflection;
+using System.Collections.Generic;
+
+namespace shiyi_mod
+{
+    [BepInPlugin("com.shiyi.mod.radar", "Shiyi.Radar", "1.0.0")]
+    public class Class1 : BasePlugin
+    {
+        internal static ManualLogSource LogSource;
+
+        public override void Load()
+        {
+                      System.Console.OutputEncoding = System.Text.Encoding.UTF8;
+
+            System.Console.InputEncoding = System.Text.Encoding.UTF8;
+            LogSource = Log;
+            LogSource.LogInfo("[Shiyi.Radar] 雷达 3.2（强行遍历版）已加载！");
+            LogSource.LogInfo("[Shiyi] 提示：进入剧情后，按下 [F11] 键强制导出 CSV。");
+            AddComponent<RadarHandler>();
+        }
+    }
+
+    public class RadarHandler : MonoBehaviour
+    {
+        void Update()
+        {
+            if (Input.GetKeyDown(KeyCode.F11))
+            {
+                Class1.LogSource.LogWarning("======= [F11] 信号接收！启动 IL2CPP 强制打平导出... =======");
+                RunRadarAndDump();
+            }
+        }
+
+        private void RunRadarAndDump()
+        {
+            try
+            {
+                // 1. 定位 AdvEngine
+                GameObject engineGo = GameObject.Find("AdvEngine");
+                if (engineGo == null)
+                {
+                    Class1.LogSource.LogError("[Shiyi.Radar] 错误：未找到 'AdvEngine' 游戏物体！");
+                    return;
+                }
+
+                // 2. 强类型转换
+                Utage.AdvEngine engine = engineGo.GetComponent("AdvEngine").Cast<Utage.AdvEngine>();
+                Utage.AdvDataManager dataManager = engine.DataManager;
+                Utage.AdvSettingDataManager settingManager = dataManager.SettingDataManager;
+
+                // 3. 锁定终极目标：ImportedScenarios
+                Utage.AdvImportScenarios importedScenarios = settingManager.ImportedScenarios;
+                if (importedScenarios == null)
+                {
+                    Class1.LogSource.LogError("[Shiyi.Radar] 错误：ImportedScenarios 为 null！");
+                    return;
+                }
+
+                // 4. 自动匹配导出路径
+                string dumpPath = Path.Combine(Paths.ConfigPath, "Shiyi_Scenario_Dump");
+                if (!Directory.Exists(dumpPath)) Directory.CreateDirectory(dumpPath);
+
+                // 5. 精确匹配获取 Chapters 容器
+                object targetContainer = GetMemberValue(importedScenarios, "Chapters") 
+                                         ?? GetMemberValue(importedScenarios, "chapters");
+
+                if (targetContainer == null)
+                {
+                    Class1.LogSource.LogError("[Shiyi.Radar] 自动导出失败：未能定位到 Chapters 容器。");
+                    return;
+                }
+
+                // 6. 使用万能列表转换器打平 List<AdvChapterData>
+                List<object> chapters = ConvertIL2CPPList(targetContainer);
+                Class1.LogSource.LogWarning($"[Shiyi.Radar] 成功解锁 Chapters 容器，内含 {chapters.Count} 个章节，开始暴力导出...");
+
+                int count = 0;
+
+                foreach (var chapter in chapters)
+                {
+                    if (chapter == null) continue;
+
+                    // 获取章节名字
+                    string chapterName = GetMemberValue(chapter, "chapterName")?.ToString() 
+                                  ?? GetMemberValue(chapter, "ChapterName")?.ToString()
+                                  ?? $"Chapter_{chapter.GetHashCode()}";
+
+                    // 7. 导出单个章节
+                    if (DumpChapter(chapterName, chapter, dumpPath))
+                    {
+                        count++;
+                    }
+                }
+
+                Class1.LogSource.LogWarning($"======= 扫描与智能导出执行完毕！请检查目录：{dumpPath}，共成功生成 {count} 个文件！ =======");
+            }
+            catch (Exception ex)
+            {
+                Class1.LogSource.LogError($"[Shiyi.Radar] 崩溃: {ex.Message}\n{ex.StackTrace}");
+            }
+        }
+
+        /// <summary>
+        /// 深度反射导出单个章节的所有 Excel 表格数据
+        /// </summary>
+        private bool DumpChapter(string chapterName, object chapterData, string dumpPath)
+        {
+            // 使用万能转换器转换 chapterData.dataList (List<AdvImportBook>)
+            object dataListObj = GetMemberValue(chapterData, "dataList") ?? GetMemberValue(chapterData, "DataList");
+            List<object> books = ConvertIL2CPPList(dataListObj);
+            if (books.Count == 0) return false;
+
+            string fileName = Path.Combine(dumpPath, $"Dump_{chapterName}.csv");
+            StringBuilder sb = new StringBuilder();
+            int rowCount = 0;
+
+            foreach (var book in books)
+            {
+                if (book == null) continue;
+
+                // 转换 book.ImportGridList (List<StringGrid>)
+                object gridListObj = GetMemberValue(book, "ImportGridList") ?? GetMemberValue(book, "gridList");
+                List<object> grids = ConvertIL2CPPList(gridListObj);
+
+                foreach (var grid in grids)
+                {
+                    if (grid == null) continue;
+
+                    string sheetName = GetMemberValue(grid, "SheetName")?.ToString() ?? "Sheet";
+                    sb.AppendLine($"#SHEET_NAME,{sheetName}");
+
+                    // 转换 grid.Rows (List<StringGridRow>)
+                    object rowsObj = GetMemberValue(grid, "Rows") ?? GetMemberValue(grid, "rows");
+                    List<object> rows = ConvertIL2CPPList(rowsObj);
+
+                    foreach (var row in rows)
+                    {
+                        if (row == null) continue;
+
+                        // 转换 row.Strings (List<string>)
+                        object cellsObj = GetMemberValue(row, "Strings") ?? GetMemberValue(row, "strings");
+                        List<object> cells = ConvertIL2CPPList(cellsObj);
+
+                        var rowData = new System.Collections.Generic.List<string>();
+                        foreach (var cellObj in cells)
+                        {
+                            string cell = cellObj?.ToString() ?? "";
+                            string safeCell = cell.Replace("\n", "\\n").Replace("\r", "");
+                            if (safeCell.Contains(",")) safeCell = $"\"{safeCell}\"";
+                            rowData.Add(safeCell);
+                        }
+                        sb.AppendLine(string.Join(",", rowData));
+                        rowCount++;
+                    }
+                }
+            }
+
+            if (rowCount > 0)
+            {
+                File.WriteAllText(fileName, sb.ToString(), Encoding.UTF8);
+                Class1.LogSource.LogMessage($"[Shiyi.Radar] 【成功】剧本 [{chapterName}] 已导出 (行数: {rowCount}) -> {fileName}");
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 【降维打击核心】将任何 IL2CPP 的 List<T> 强制转换为标准的 C# List<object>
+        /// </summary>
+        private static List<object> ConvertIL2CPPList(object il2cppList)
+        {
+            var result = new List<object>();
+            if (il2cppList == null) return result;
+
+            var type = il2cppList.GetType();
+
+            // 1. 获取 Count 属性
+            var countProp = type.GetProperty("Count") ?? type.GetProperty("count");
+            if (countProp == null) return result;
+
+            int count = (int)countProp.GetValue(il2cppList);
+
+            // 2. 获取 get_Item 方法（即索引器 list[i]）
+            var getItemMethod = type.GetMethod("get_Item") ?? type.GetMethod("GetItem");
+            if (getItemMethod == null) return result;
+
+            // 3. 循环装填
+            for (int i = 0; i < count; i++)
+            {
+                try
+                {
+                    var item = getItemMethod.Invoke(il2cppList, new object[] { i });
+                    result.Add(item);
+                }
+                catch { }
+            }
+
+            return result;
+        }
+
+        private static object GetMemberValue(object obj, string name)
+        {
+            if (obj == null) return null;
+            var type = obj.GetType();
+
+            var prop = type.GetProperty(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (prop != null)
+            {
+                try { return prop.GetValue(obj); } catch { }
+            }
+
+            var field = type.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (field != null)
+            {
+                try { return field.GetValue(obj); } catch { }
+            }
+
+            return null;
+        }
+    }
+}

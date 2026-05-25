@@ -1,0 +1,102 @@
+using BepInEx;
+using BepInEx.Unity.IL2CPP;
+using HarmonyLib;
+using Utage;
+using System;
+using System.IO;
+using System.Text;
+using System.Collections.Generic;
+
+namespace UtageCsvInjectorPlugin
+{
+    [BepInPlugin("com.shiyimv.utage_csv_injector", "Utage CSV Script Injector", "1.4.0")]
+    public class Plugin : BasePlugin 
+    {
+        // 核心缓存
+        public static Dictionary<string, Dictionary<int, string>> CustomLinesCache = new Dictionary<string, Dictionary<int, string>>();
+        public static string DumpFilePath;
+
+        public override void Load() 
+        {
+            DumpFilePath = Path.Combine(Paths.PluginPath, "ScenarioDump.csv");
+            LoadScenarioDump();
+            Harmony harmony = new Harmony("com.shiyimv.utage_csv_injector");
+            harmony.PatchAll();
+        }
+
+        public static void LoadScenarioDump()
+        {
+            try
+            {
+                if (!File.Exists(DumpFilePath)) return;
+
+                CustomLinesCache.Clear();
+                
+                using (var fs = new FileStream(DumpFilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                {
+                    using (var reader = new StreamReader(fs, Encoding.UTF8, true))
+                    {
+                        string currentSheetName = "Unknown";
+                        int localRowIndex = 0; 
+                        string line;
+
+                        while ((line = reader.ReadLine()) != null)
+                        {
+                            if (string.IsNullOrWhiteSpace(line)) continue;
+                            if (line.StartsWith("#SHEET_NAME", StringComparison.OrdinalIgnoreCase))
+                            {
+                                string[] parts = line.Split(',');
+                                if (parts.Length > 1)
+                                {
+                                    currentSheetName = parts[1].Trim();
+                                    localRowIndex = 0; 
+                                    
+                                    if (!CustomLinesCache.ContainsKey(currentSheetName))
+                                    {
+                                        CustomLinesCache[currentSheetName] = new Dictionary<int, string>();
+                                    }
+                                }
+                            }
+                            if (CustomLinesCache.ContainsKey(currentSheetName))
+                            {
+                                CustomLinesCache[currentSheetName][localRowIndex] = line;
+                                localRowIndex++;
+                            }
+                        }
+                    }
+                }
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(AdvCommandParser), "CreateCommand", new Type[] { typeof(StringGridRow), typeof(AdvSettingDataManager) })]
+    public class AdvCommandParser_CreateCommand_Patch
+    {
+        [HarmonyPrefix]
+        static void Prefix(StringGridRow row, AdvSettingDataManager dataManager)
+        {
+            if (row == null || row.Grid == null) return;
+
+            try
+            {
+                string sheetName = row.Grid.SheetName;
+                int rowIndex = row.RowIndex;
+
+                if (Plugin.CustomLinesCache.TryGetValue(sheetName, out var sheetLines))
+                {
+                    if (sheetLines.TryGetValue(rowIndex, out string rawCsvLine))
+                    {
+                        if (string.IsNullOrWhiteSpace(rawCsvLine) || rawCsvLine.StartsWith("#")) return;
+                        row.InitFromCsvText(CsvType.Csv, rawCsvLine);
+                    }
+                }
+            }
+            catch
+            {
+            }
+        }
+    }
+}

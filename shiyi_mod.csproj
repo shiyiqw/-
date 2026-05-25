@@ -1,0 +1,89 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework> 
+    <AssemblyName>shiyi_mod</AssemblyName>
+    <Version>1.0.0</Version>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>latest</LangVersion>
+    <Platforms>AnyCPU</Platforms>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="inspect\**\*.cs" />
+    <Compile Remove="dump.cs" />
+    <EmbeddedResource Include="Resources\*.png" />
+    <Reference Include="BepInEx.Core">
+      <HintPath>D:\steam\steamapps\common\哀鸿：城破十日记\BepInEx\core\BepInEx.Core.dll</HintPath>
+    </Reference>
+    <Reference Include="BepInEx.Unity.IL2CPP">
+      <HintPath>D:\steam\steamapps\common\哀鸿：城破十日记\BepInEx\core\BepInEx.Unity.IL2CPP.dll</HintPath>
+    </Reference>
+    <Reference Include="Il2CppInterop.Runtime">
+      <HintPath>D:\steam\steamapps\common\哀鸿：城破十日记\BepInEx\core\Il2CppInterop.Runtime.dll</HintPath>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>D:\steam\steamapps\common\哀鸿：城破十日记\BepInEx\core\0Harmony.dll</HintPath>
+    </Reference>
+
+    <Reference Include="Il2Cppmscorlib">
+      <HintPath>D:\steam\steamapps\common\哀鸿：城破十日记\BepInEx\interop\Il2Cppmscorlib.dll</HintPath>
+    </Reference>
+    <Reference Include="Il2CppSystem">
+      <HintPath>D:\steam\steamapps\common\哀鸿：城破十日记\BepInEx\interop\Il2CppSystem.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>D:\steam\steamapps\common\哀鸿：城破十日记\BepInEx\interop\UnityEngine.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>D:\steam\steamapps\common\哀鸿：城破十日记\BepInEx\interop\UnityEngine.CoreModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>D:\steam\steamapps\common\哀鸿：城破十日记\BepInEx\interop\UnityEngine.UI.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.UIModule">
+      <HintPath>D:\steam\steamapps\common\哀鸿：城破十日记\BepInEx\interop\UnityEngine.UIModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.IMGUIModule">
+      <HintPath>D:\steam\steamapps\common\哀鸿：城破十日记\BepInEx\interop\UnityEngine.IMGUIModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.AnimationModule">
+      <HintPath>D:\steam\steamapps\common\哀鸿：城破十日记\BepInEx\interop\UnityEngine.AnimationModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.TextRenderingModule">
+      <HintPath>D:\steam\steamapps\common\哀鸿：城破十日记\BepInEx\interop\UnityEngine.TextRenderingModule.dll</HintPath>
+    </Reference>
+    
+    <Reference Include="Assembly-CSharp">
+      <HintPath>D:\steam\steamapps\common\哀鸿：城破十日记\BepInEx\interop\Assembly-CSharp.dll</HintPath>
+    </Reference>
+    <Reference Include="Unity.TextMeshPro">
+      <HintPath>D:\steam\steamapps\common\哀鸿：城破十日记\BepInEx\interop\Unity.TextMeshPro.dll</HintPath>
+    </Reference>
+    <Reference Include="DOTween">
+      <HintPath>D:\steam\steamapps\common\哀鸿：城破十日记\BepInEx\interop\DOTween.dll</HintPath>
+    </Reference>
+
+    <Reference Include="UnityEngine.UnityWebRequestModule">
+      <HintPath>D:\steam\steamapps\common\哀鸿：城破十日记\BepInEx\interop\UnityEngine.UnityWebRequestModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.AudioModule">
+      <HintPath>D:\steam\steamapps\common\哀鸿：城破十日记\BepInEx\interop\UnityEngine.AudioModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.ImageConversionModule">
+      <HintPath>D:\steam\steamapps\common\哀鸿：城破十日记\BepInEx\interop\UnityEngine.ImageConversionModule.dll</HintPath>
+    </Reference>
+    <Reference Include="InputLegacyModule">
+      <HintPath>D:\steam\steamapps\common\哀鸿：城破十日记\BepInEx\interop\UnityEngine.InputLegacyModule.dll</HintPath>
+    </Reference>
+    <Reference Include="RubyTextMeshPro">
+      <HintPath>D:\steam\steamapps\common\哀鸿：城破十日记\BepInEx\interop\RubyTextMeshPro.dll</HintPath>
+    </Reference>
+    <Reference Include="Febucci.TextAnimator.TMP.Runtime">
+      <HintPath>D:\steam\steamapps\common\哀鸿：城破十日记\BepInEx\interop\Febucci.TextAnimator.TMP.Runtime.dll</HintPath>
+    </Reference>
+
+  </ItemGroup>
+
+</Project>

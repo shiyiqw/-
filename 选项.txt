@@ -1,0 +1,112 @@
+using BepInEx;
+using BepInEx.Unity.IL2CPP;
+using HarmonyLib;
+using UnityEngine;
+using System;
+using TMPro;
+
+
+namespace Shiyi_mods
+{
+    [BepInPlugin("com.shiyi.advmod", "Shiyi UI Cache Mod", "1.0.0")]
+    public class YourModClass : BasePlugin
+    {
+        public override void Load()
+        {
+            Log.LogInfo("Shiyi Mod Loaded! F5:保存模板 | F6:生成选项");
+            
+            var harmony = new Harmony("com.shiyi.advmod");
+            harmony.PatchAll();
+
+            // 注入 Unity 生命周期处理器
+            AddComponent<PluginUpdateHandler>();
+        }
+    }
+
+    public class PluginUpdateHandler : MonoBehaviour
+    {
+        // 必须有的构造函数，供 IL2CPP 运行时调用
+        public PluginUpdateHandler(IntPtr ptr) : base(ptr) { }
+
+        // 静态变量：用于在内存中保存提取出来的 UI 模板
+        private static GameObject _cachedTemplate;
+
+        private void Update()
+        {
+            if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.F5))
+            {
+                CaptureTemplate();
+            }
+
+            if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.F6))
+            {
+                CreateFromTemplate();
+            }
+        }
+
+        private void CaptureTemplate()
+        {
+            // 根据 image_4ad688.png 的路径寻找 Content 容器
+            GameObject contentGoal = GameObject.Find("AdvEngine/UI/Selection/Content");
+
+            if (contentGoal != null && contentGoal.transform.childCount > 0)
+            {
+                // 1. 获取第一个原生选项作为源
+                GameObject original = contentGoal.transform.GetChild(0).gameObject;
+
+                // 2. 彻底克隆一份存入静态变量
+                if (_cachedTemplate != null) { Destroy(_cachedTemplate); } // 清除旧模板
+                
+                _cachedTemplate = Instantiate(original);
+                _cachedTemplate.name = "Shiyi_Template_Storage";
+                
+                // 3. 关键：将其隐藏并保护，防止切换场景被删除
+                _cachedTemplate.SetActive(false);
+                DontDestroyOnLoad(_cachedTemplate);
+
+                Debug.Log(">>> 成功！已将当前的 SelectionItem 结构保存至内存。");
+            }
+            else
+            {
+                Debug.LogWarning("未发现可抓取的 UI 项，请确保对话选项框已弹出。");
+            }
+        }
+
+        private void CreateFromTemplate()
+{
+    if (_cachedTemplate == null) return;
+
+    GameObject contentGoal = GameObject.Find("AdvEngine/UI/Selection/Content");
+
+    if (contentGoal != null)
+    {
+        GameObject MessageText = GameObject.Find("AdvEngine/UI/MessageWindowManager");
+        MessageText.SetActive(false);
+        // --- 创建第一个选项 ---
+        GameObject item1 = Instantiate(_cachedTemplate, contentGoal.transform);
+        item1.name = "SelectionItem_Choice1";
+        item1.SetActive(true);
+        
+        var label1 = item1.GetComponentInChildren<TextMeshProUGUI>();
+        if (label1 != null) 
+        {
+            // 注意：在代码里建议使用 .text 属性，它是公开的 setter
+            label1.text = "我们逃吧悔儿"; 
+        }
+
+        // --- 创建第二个选项 (......) ---
+        GameObject item2 = Instantiate(_cachedTemplate, contentGoal.transform);
+        item2.name = "SelectionItem_Choice2";
+        item2.SetActive(true);
+        
+        var label2 = item2.GetComponentInChildren<TextMeshProUGUI>();
+        if (label2 != null) 
+        {
+            label2.text = "......";
+        }
+
+        Debug.Log(">>> 成功注入了两个自定义选项。");
+    }
+}
+    }
+}

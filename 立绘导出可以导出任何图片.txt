@@ -1,0 +1,115 @@
+using System;
+using System.IO;
+using System.Collections.Generic;
+using BepInEx;
+using BepInEx.Unity.IL2CPP;
+using UnityEngine;
+using UnityEngine.UI;
+
+namespace shiyi_mod
+{
+    [BepInPlugin("com.shiyi.tool.extractor", "Shiyi.SpriteExtractor", "1.1.0")]
+    public class SpriteExtractorPlugin : BasePlugin
+    {
+        public override void Load()
+        {
+            System.Console.OutputEncoding = System.Text.Encoding.UTF8;
+            Log.LogInfo("Shiyi Sprite Extractor Loaded!");
+            AddComponent<SpriteDumper>();
+        }
+    }
+
+    public class SpriteDumper : MonoBehaviour
+    {
+        public static List<string> ExportedHistory = new List<string>();
+        
+        private float timer = 0f;
+        private float scanInterval = 0.0f;
+
+        void Update()
+        {
+            timer += Time.deltaTime;
+            if (timer >= scanInterval)
+            {
+                timer = 0f;
+                AutoScanAndExport();
+            }
+        }
+
+        void AutoScanAndExport()
+        {
+            GameObject mypath = GameObject.Find("AdvEngine/GraphicManager/中");
+            if (mypath == null || mypath.transform.childCount == 0) return;
+
+            // 1. 获取当前场景中的角色节点（例如：[1] 赵老头）
+            Transform charNode = mypath.transform.GetChild(0);
+            string charFolder = charNode.name; // 用这个作为文件夹名
+
+            if (charNode.childCount > 0)
+            {
+                Transform spriteNode = charNode.GetChild(0);
+                string fullResourcePath = spriteNode.name; // 例如：Starveling/Texture/.../通常.png
+
+                if (ExportedHistory.Contains(fullResourcePath))
+                {
+                    return; // 已经导过了，直接跳过
+                }
+
+                // 3. 尝试获取图片并导出
+                RawImage img = spriteNode.GetComponent<RawImage>();
+                if (img != null && img.texture != null)
+                {
+                    Texture2D tex = img.texture.Cast<Texture2D>();
+                    if (tex != null)
+                    {
+                        string fileName = Path.GetFileName(fullResourcePath);
+                        if (!fileName.EndsWith(".png")) fileName += ".png";
+
+                        // 4. 执行带文件夹的保存逻辑
+                        SaveToCharacterFolder(tex, charFolder, fileName);
+                        
+                        // 5. 加入历史记录
+                        ExportedHistory.Add(fullResourcePath);
+                    }
+                }
+            }
+        }
+
+        void SaveToCharacterFolder(Texture2D sourceTex, string folderName, string fileName)
+        {
+            try
+            {
+                // 构造路径：.../ShiyiCustomTexture/立绘/角色名/文件名.png
+                string rootPath = Path.Combine(Paths.PluginPath, "ShiyiCustomTexture", "立绘");
+                string targetDir = Path.Combine(rootPath, folderName);
+
+                if (!Directory.Exists(targetDir)) Directory.CreateDirectory(targetDir);
+
+                string finalPath = Path.Combine(targetDir, fileName);
+
+                // --- 转换并保存 ---
+                RenderTexture rt = RenderTexture.GetTemporary(sourceTex.width, sourceTex.height, 0);
+                Graphics.Blit(sourceTex, rt);
+                RenderTexture prev = RenderTexture.active;
+                RenderTexture.active = rt;
+
+                Texture2D readable = new Texture2D(sourceTex.width, sourceTex.height,TextureFormat.RGBA32, false);
+                readable.ReadPixels(new Rect(0, 0, rt.width, rt.height), 0, 0);
+                readable.Apply();
+
+                RenderTexture.active = prev;
+                RenderTexture.ReleaseTemporary(rt);
+
+                byte[] bytes = UnityEngine.ImageConversion.EncodeToPNG(readable);
+                File.WriteAllBytes(finalPath, bytes);
+                
+                UnityEngine.Debug.Log($"[Shiyi] 自动导出成功: {folderName} -> {fileName}");
+                Destroy(readable);
+            }
+            catch (Exception e)
+            {
+                UnityEngine.Debug.LogError("[Shiyi] 导出失败: " + e.Message);
+            }
+        }
+    }
+}

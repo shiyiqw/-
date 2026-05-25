@@ -1,0 +1,73 @@
+using BepInEx;
+using BepInEx.Unity.IL2CPP;
+using BepInEx.Logging;
+using HarmonyLib;
+using System;
+
+namespace StoryTextLoggerPlugin
+{
+    [BepInPlugin("com.yourname.storylogger", "Story Text Logger", "1.0.0")]
+    public class Plugin : BasePlugin 
+    {
+        internal static ManualLogSource MyLog;
+
+        public override void Load() 
+        {
+            // 🌟 强制控制台输出为 UTF-8 编码，防止中文乱码
+            System.Console.OutputEncoding = System.Text.Encoding.UTF8;
+            
+            MyLog = base.Log; 
+            Harmony harmony = new Harmony("com.yourname.storylogger");
+            harmony.PatchAll();
+            MyLog.LogInfo("=== Utage 剧本基因重写 Mod 已启动 ===");
+        }
+    }
+
+    // =================================================================
+    // 核心功能：直接重写剧本（保留你的突破性成果！）
+    // =================================================================
+    [HarmonyPatch("Utage.AdvCommand, Assembly-CSharp", "ParseCellLocalizedText")]
+    public class AdvCommand_ParseCellLocalizedText_Patch
+    {
+        [HarmonyPostfix]
+        static void Postfix(ref string __result) 
+        {
+            if (!string.IsNullOrEmpty(__result) && __result == "我患了一种病。")
+            {
+                Plugin.MyLog.LogMessage($"[基因重写] 拦截到原始剧本数据: {__result}");
+                __result = "我患了一种极为罕见的绝症，医生说我已经没救了，但我还在坚持写 Mod！";
+                Plugin.MyLog.LogMessage($"[基因重写] 已替换为超长剧本: {__result}");
+            }
+        }
+    }
+
+    // =================================================================
+    // 监控探头 A：玩家手动点击翻页
+    // =================================================================
+    [HarmonyPatch("Utage.AdvPage, Assembly-CSharp", "InputSendMessage")]
+    public class AdvPage_InputSendMessage_Patch
+    {
+        [HarmonyPostfix]
+        static void Postfix()
+        {
+            Plugin.MyLog.LogMessage("--------------------------------------------------");
+            Plugin.MyLog.LogWarning("[事件监控] ---> InputSendMessage 触发！(玩家手动点击了屏幕/按键)");
+            Plugin.MyLog.LogMessage("--------------------------------------------------");
+        }
+    }
+
+    // =================================================================
+    // 监控探头 B：剧情指令流转（包含手动、自动播放、跳过）
+    // =================================================================
+    [HarmonyPatch("Utage.AdvPage, Assembly-CSharp", "ToNextCommand")]
+    public class AdvPage_ToNextCommand_Patch
+    {
+        [HarmonyPostfix]
+        static void Postfix()
+        {
+            Plugin.MyLog.LogMessage("==================================================");
+            Plugin.MyLog.LogInfo("[事件监控] ===> ToNextCommand 触发！(剧情正在前往下一行代码/下一句台词)");
+            Plugin.MyLog.LogMessage("==================================================");
+        }
+    }
+}

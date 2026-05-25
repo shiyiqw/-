@@ -1,0 +1,269 @@
+#define WIN32_LEAN_AND_MEAN
+#include <Windows.h>
+#include <string>
+#include "MinHook.h"
+
+extern "C" __declspec(selectany) IMAGE_DOS_HEADER __ImageBase;
+
+// ==============================
+//  最小 IL2CPP / Unity 结构声明
+//  这里只保留当前 hook 需要的内容，
+//  不再直接 include 巨大的 il2cpp.h，避免：
+//  - HKEY_CLASSES_ROOT 等 Windows 宏污染
+//  - stdin/stdout/stderr 宏污染
+//  - dump 头文件里匿名结构/保留字导致的编译错误
+// ==============================
+
+struct System_String_o;
+struct Utage_AssetFileUtage_o;
+
+struct System_String_Fields
+{
+    int32_t _stringLength;
+    wchar_t _firstChar;
+};
+
+struct System_String_o
+{
+    void* klass;
+    void* monitor;
+    System_String_Fields fields;
+};
+
+// 已知 RVA（来自 dump.cs）
+// AssetFileUtage.ParseLoadPath = 0x3BCE40
+// AssetFileUtage.LoadResource  = 0x3C3910
+
+using il2cpp_string_new_utf16_t = System_String_o* (*)(const wchar_t*, int);
+static il2cpp_string_new_utf16_t g_il2cpp_string_new_utf16 = nullptr;
+static HMODULE g_gameAssembly = nullptr;
+static HANDLE g_logFile = INVALID_HANDLE_VALUE;
+static const wchar_t* kFallbackVoicePath = L"starveling/sound/voice/方知宥/21_方知宥_20";
+
+static void InitLog()
+{
+    if (g_logFile != INVALID_HANDLE_VALUE) return;
+
+    wchar_t dllPath[MAX_PATH]{};
+    GetModuleFileNameW((HMODULE)&__ImageBase, dllPath, MAX_PATH);
+
+    std::wstring path = dllPath;
+    auto pos = path.find_last_of(L"\\/");
+    std::wstring logPath = (pos == std::wstring::npos)
+        ? L"voice_hook.log"
+        : (path.substr(0, pos + 1) + L"voice_hook.log");
+
+    g_logFile = CreateFileW(
+        logPath.c_str(),
+        FILE_APPEND_DATA,
+        FILE_SHARE_READ,
+        nullptr,
+        OPEN_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr
+    );
+}
+
+static void Log(const std::wstring& s)
+{
+    InitLog();
+    if (g_logFile == INVALID_HANDLE_VALUE) return;
+
+    std::wstring line = s + L"\r\n";
+    DWORD written = 0;
+    WriteFile(g_logFile, line.c_str(), (DWORD)(line.size() * sizeof(wchar_t)), &written, nullptr);
+}
+
+static std::wstring ToWString(System_String_o* s)
+{
+    if (!s) return L"";
+    return std::wstring(&s->fields._firstChar, s->fields._stringLength);
+}
+
+static bool HasLocalMark(const std::wstring& s)
+{
+    return s.find(L"L:/") != std::wstring::npos ||
+           s.find(L"L:\\") != std::wstring::npos ||
+           s.find(L"L:") != std::wstring::npos ||
+           s.find(L"ext:") != std::wstring::npos;
+}
+
+static bool IsBlockedExternalVoicePath(const std::wstring& s)
+{
+    return HasLocalMark(s) ||
+           s.find(L"Starveling/Sound/Voice/ShiyiAssets_List\\Voice\\") != std::wstring::npos ||
+           s.find(L"Starveling/Sound/Voice/ShiyiAssets_List/Voice/") != std::wstring::npos;
+}
+
+static std::wstring StripLocalMark(const std::wstring& s)
+{
+    size_t pos = s.find(L"ext:");
+    size_t len = 4;
+
+    if (pos == std::wstring::npos)
+    {
+        pos = s.find(L"L:/");
+        len = 3;
+    }
+    if (pos == std::wstring::npos)
+    {
+        pos = s.find(L"L:\\");
+        len = 3;
+    }
+    if (pos == std::wstring::npos)
+    {
+        pos = s.find(L"L:");
+        len = 2;
+    }
+    if (pos == std::wstring::npos)
+        return s;
+
+    std::wstring out = s.substr(0, pos) + s.substr(pos + len);
+    while (!out.empty() && (out[0] == L'/' || out[0] == L'\\'))
+        out.erase(out.begin());
+    return out;
+}
+
+static System_String_o* NewString(const std::wstring& s)
+{
+    if (!g_il2cpp_string_new_utf16) return nullptr;
+    return g_il2cpp_string_new_utf16(s.c_str(), (int)s.size());
+}
+
+using ParseLoadPath_t = System_String_o* (*)(Utage_AssetFileUtage_o* __this, void* method);
+using LoadResource_t  = void (*)(Utage_AssetFileUtage_o* __this, System_String_o* loadPath, void* onComplete, void* onFailed, void* method);
+
+static ParseLoadPath_t g_origParseLoadPath = nullptr;
+static LoadResource_t  g_origLoadResource = nullptr;
+
+static uintptr_t RVA(uintptr_t rva)
+{
+    return reinterpret_cast<uintptr_t>(g_gameAssembly) + rva;
+}
+
+static System_String_o* Hook_ParseLoadPath(Utage_AssetFileUtage_o* __this, void* method)
+{
+    auto ret = g_origParseLoadPath(__this, method);
+    std::wstring oldPath = ToWString(ret);
+    if (!HasLocalMark(oldPath))
+        return ret;
+
+    std::wstring newPath = StripLocalMark(oldPath);
+    Log(L"[ParseLoadPath] external path redirected to fallback | old=" + oldPath + L" | normalized=" + newPath + L" | fallback=" + std::wstring(kFallbackVoicePath));
+
+    auto fallback = NewString(kFallbackVoicePath);
+    return fallback ? fallback : ret;
+}
+
+static void Hook_LoadResource(Utage_AssetFileUtage_o* __this, System_String_o* loadPath, void* onComplete, void* onFailed, void* method)
+{
+    std::wstring oldPath = ToWString(loadPath);
+    if (!IsBlockedExternalVoicePath(oldPath))
+    {
+        g_origLoadResource(__this, loadPath, onComplete, onFailed, method);
+        return;
+    }
+
+    std::wstring newPath = StripLocalMark(oldPath);
+    Log(L"[LoadResource] external path redirected to fallback | old=" + oldPath + L" | normalized=" + newPath + L" | fallback=" + std::wstring(kFallbackVoicePath));
+
+    auto fallback = NewString(kFallbackVoicePath);
+    g_origLoadResource(__this, fallback ? fallback : loadPath, onComplete, onFailed, method);
+}
+
+static bool InitApi()
+{
+    g_gameAssembly = GetModuleHandleW(L"GameAssembly.dll");
+    if (!g_gameAssembly)
+    {
+        Log(L"[Init] GameAssembly.dll not found");
+        return false;
+    }
+
+    g_il2cpp_string_new_utf16 = reinterpret_cast<il2cpp_string_new_utf16_t>(
+        GetProcAddress(g_gameAssembly, "il2cpp_string_new_utf16")
+    );
+
+    if (!g_il2cpp_string_new_utf16)
+    {
+        Log(L"[Init] il2cpp_string_new_utf16 not found");
+        return false;
+    }
+
+    return true;
+}
+
+static bool InstallHooks()
+{
+    if (MH_Initialize() != MH_OK)
+    {
+        Log(L"[Hook] MH_Initialize failed");
+        return false;
+    }
+
+    void* parseAddr = reinterpret_cast<void*>(RVA(0x3BCE40));
+    void* loadResAddr = reinterpret_cast<void*>(RVA(0x3C3910));
+
+    if (MH_CreateHook(loadResAddr, &Hook_LoadResource, reinterpret_cast<void**>(&g_origLoadResource)) != MH_OK)
+    {
+        Log(L"[Hook] Create LoadResource failed");
+        return false;
+    }
+    if (MH_EnableHook(loadResAddr) != MH_OK)
+    {
+        Log(L"[Hook] Enable LoadResource failed");
+        return false;
+    }
+    Log(L"[Hook] LoadResource enabled");
+
+    if (MH_CreateHook(parseAddr, &Hook_ParseLoadPath, reinterpret_cast<void**>(&g_origParseLoadPath)) == MH_OK)
+    {
+        if (MH_EnableHook(parseAddr) == MH_OK)
+            Log(L"[Hook] ParseLoadPath enabled");
+        else
+            Log(L"[Hook] ParseLoadPath enable failed");
+    }
+    else
+    {
+        Log(L"[Hook] ParseLoadPath create failed");
+    }
+
+    return true;
+}
+
+static DWORD WINAPI MainThread(LPVOID)
+{
+    Log(L"[Init] DLL loaded");
+
+    for (int i = 0; i < 200; ++i)
+    {
+        g_gameAssembly = GetModuleHandleW(L"GameAssembly.dll");
+        if (g_gameAssembly) break;
+        Sleep(100);
+    }
+
+    if (!InitApi())
+    {
+        Log(L"[Init] InitApi failed");
+        return 0;
+    }
+
+    if (!InstallHooks())
+    {
+        Log(L"[Init] InstallHooks failed");
+        return 0;
+    }
+
+    Log(L"[Init] all ok");
+    return 0;
+}
+
+BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID)
+{
+    if (reason == DLL_PROCESS_ATTACH)
+    {
+        DisableThreadLibraryCalls(hModule);
+        CreateThread(nullptr, 0, MainThread, nullptr, 0, nullptr);
+    }
+    return TRUE;
+}

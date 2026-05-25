@@ -1,0 +1,88 @@
+using System;
+using System.IO;
+using System.Text;
+using BepInEx;
+using BepInEx.Unity.IL2CPP;
+using UnityEngine;
+
+namespace shiyi_mod
+{
+    [BepInPlugin("com.shiyi.customaudio", "Shiyi Custom Audio", "1.0.0")]
+    public class Class1 : BasePlugin
+    {
+        public override void Load()
+        {
+            Console.OutputEncoding = Encoding.UTF8;
+            Log.LogInfo("=== 暴力原生加载版 Mod 加载成功 ===");
+            AddComponent<NativeAudioPlayer>();
+        }
+    }
+
+    public class NativeAudioPlayer : MonoBehaviour
+    {
+        private AudioSource _source;
+
+        void Update()
+        {
+            if (Input.GetKeyDown(KeyCode.F8))
+            {
+                // 注意：由于是原生解析，请务必先将 A.mp3 转换成 A.wav
+                string path = Path.Combine(Paths.PluginPath, "ShiyiCustomTexture", "BGM", "A.wav");
+                Console.WriteLine($"[Shiyi] F8按下，正在暴力读取: {path}");
+
+                try {
+                    if (File.Exists(path)) {
+                        AudioClip clip = LoadWavAsAudioClip(path);
+                        Play(clip);
+                    } else {
+                        Console.WriteLine("[Shiyi] 错误: 文件不存在！");
+                    }
+                } catch (Exception e) {
+                    Console.WriteLine("[Shiyi] 异常: " + e.Message);
+                }
+            }
+        }
+
+        // 纯 C# 解析 WAV 文件并转换为 AudioClip
+        private AudioClip LoadWavAsAudioClip(string filePath)
+        {
+            byte[] bytes = File.ReadAllBytes(filePath);
+
+            // 简单的 WAV 解析逻辑 (标准 PCM 格式)
+            int channels = BitConverter.ToInt16(bytes, 22);
+            int frequency = BitConverter.ToInt32(bytes, 24);
+            int pos = 12;
+
+            // 寻找 "data" 数据块的起始位置
+            while (!(bytes[pos] == 100 && bytes[pos + 1] == 97 && bytes[pos + 2] == 116 && bytes[pos + 3] == 97)) {
+                pos++;
+            }
+            pos += 4;
+
+            int chunkSize = BitConverter.ToInt32(bytes, pos);
+            pos += 4;
+
+            // 将字节转换为 Float 采样点
+            float[] wavData = new float[chunkSize / 2];
+            for (int i = 0; i < wavData.Length; i++) {
+                wavData[i] = BitConverter.ToInt16(bytes, pos + i * 2) / 32768.0f;
+            }
+
+            // 使用 AudioClip.Create，这个方法在 IL2CPP 中非常稳定
+            AudioClip clip = AudioClip.Create(Path.GetFileName(filePath), wavData.Length / channels, channels, frequency, false);
+            clip.SetData(wavData, 0);
+
+            Console.WriteLine($"[Shiyi] 成功通过字节流创建 AudioClip: {channels}声道, {frequency}Hz");
+            return clip;
+        }
+
+        private void Play(AudioClip clip)
+        {
+            if (_source == null) _source = gameObject.AddComponent<AudioSource>();
+            _source.clip = clip;
+            _source.loop = true;
+            _source.Play();
+            Console.WriteLine("[Shiyi] 声音应该响了！");
+        }
+    }
+}

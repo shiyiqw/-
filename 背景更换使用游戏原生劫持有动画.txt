@@ -1,0 +1,168 @@
+using BepInEx;
+using BepInEx.Unity.IL2CPP;
+using UnityEngine;
+using UnityEngine.UI;
+
+namespace shiyi_mod
+{
+    [BepInPlugin("com.shiyi.mod", "Shiyi.Ultimate.Sync", "4.0.0")]
+    public class Class1 : BasePlugin
+    {
+        // 目标游戏资源路径与名称 (根据你的截图，Object.name 就是这个完整路径)
+        private const string TARGET_PATH = "Starveling/Texture/Event/CG68/cg68_1.jpg";
+        private const string TARGET_PATH_NO_EXT = "Starveling/Texture/Event/CG68/cg68_1";
+        private const string TARGET_NAME = "cg68_1";
+
+        public static bool IsEnabled = true; // 默认开启背景替换
+
+        private static Texture2D _targetTexture = null;
+        private static Sprite _targetSprite = null;
+
+        public override void Load()
+        {
+            Log.LogInfo("[Shiyi] 终极背景劫持模组已启动！[F8] 可一键开关切换。");
+            AddComponent<PluginUpdateHandler>();
+        }
+
+        public static void UpdateTick()
+        {
+            if (!IsEnabled) return;
+
+            // 1. 定位 Utage 原生背景容器
+            GameObject bgContainer = GameObject.Find("AdvEngine/GraphicManager/BG");
+            if (bgContainer == null) return;
+
+            // 2. 获取游戏内部的目标图片资源
+            Texture2D tex = GetGameTexture();
+            if (tex == null) return;
+
+            // 3. 劫持并替换所有原生的 RawImage 贴图
+            var rawImages = bgContainer.GetComponentsInChildren<RawImage>(true);
+            foreach (var raw in rawImages)
+            {
+                if (raw != null && raw.texture != tex)
+                {
+                    raw.texture = tex;
+                }
+            }
+
+            // 4. 劫持并替换所有原生的 Image 贴图 (部分背景可能使用 Sprite 渲染)
+            var images = bgContainer.GetComponentsInChildren<Image>(true);
+            if (images.Length > 0)
+            {
+                // 仅在需要时创建一次 Sprite 缓存，防止内存泄漏
+                if (_targetSprite == null)
+                {
+                    _targetSprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
+                    _targetSprite.name = TARGET_NAME + "_Sprite";
+                }
+
+                foreach (var img in images)
+                {
+                    if (img != null && img.sprite != _targetSprite)
+                    {
+                        img.sprite = _targetSprite;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// 三重保障：动态获取游戏内部资源文件中的贴图
+        /// </summary>
+        private static Texture2D GetGameTexture()
+        {
+            if (_targetTexture != null) return _targetTexture;
+
+            // 方法一：从当前已载入内存的贴图对象中直接查找（最快，无需任何 DLL 依赖）
+            var allTextures = Resources.FindObjectsOfTypeAll<Texture2D>();
+            foreach (var t in allTextures)
+            {
+                if (t != null && (t.name == TARGET_PATH || t.name == TARGET_NAME))
+                {
+                    _targetTexture = t;
+                    return _targetTexture;
+                }
+            }
+
+            // 方法二：使用反射动态检索 AssetBundle，避免因缺少 UnityEngine.AssetBundleModule 引用导致编译报错
+            try
+            {
+                _targetTexture = TryLoadFromAssetBundleReflection();
+                if (_targetTexture != null) return _targetTexture;
+            }
+            catch { }
+
+            // 方法三：标准 Resources 路径加载（去后缀）
+            _targetTexture = Resources.Load<Texture2D>(TARGET_PATH_NO_EXT);
+            if (_targetTexture != null) return _targetTexture;
+
+            return null;
+        }
+
+        /// <summary>
+        /// 使用反射安全调用 AssetBundle API，无需项目显式引用 AssetBundle 模块 DLL
+        /// </summary>
+        private static Texture2D TryLoadFromAssetBundleReflection()
+        {
+            var abType = System.Type.GetType("UnityEngine.AssetBundle, UnityEngine.AssetBundleModule") 
+                         ?? System.Type.GetType("UnityEngine.AssetBundle, UnityEngine");
+            if (abType == null) return null;
+
+            var getAllMethod = abType.GetMethod("GetAllLoadedAssetBundles", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+            if (getAllMethod == null) return null;
+
+            var bundles = getAllMethod.Invoke(null, null) as System.Collections.IEnumerable;
+            if (bundles == null) return null;
+
+            var containsMethod = abType.GetMethod("Contains", new[] { typeof(string) });
+            var loadAssetMethod = abType.GetMethod("LoadAsset", new[] { typeof(string), typeof(System.Type) });
+
+            if (containsMethod == null || loadAssetMethod == null) return null;
+
+            foreach (var bundle in bundles)
+            {
+                if (bundle == null) continue;
+
+                bool hasAsset = (bool)containsMethod.Invoke(bundle, new object[] { TARGET_PATH });
+                if (!hasAsset)
+                {
+                    hasAsset = (bool)containsMethod.Invoke(bundle, new object[] { TARGET_PATH_NO_EXT });
+                }
+
+                if (hasAsset)
+                {
+                    var asset = loadAssetMethod.Invoke(bundle, new object[] { TARGET_PATH, typeof(Texture2D) })
+                                ?? loadAssetMethod.Invoke(bundle, new object[] { TARGET_PATH_NO_EXT, typeof(Texture2D) });
+                    if (asset != null) return asset as Texture2D;
+                }
+            }
+            return null;
+        }
+
+        public static void ToggleMod()
+        {
+            IsEnabled = !IsEnabled;
+            System.Console.WriteLine($"[Shiyi] 劫持状态变更: {(IsEnabled ? "开启" : "关闭")}");
+            
+            if (!IsEnabled)
+            {
+                _targetTexture = null;
+                _targetSprite = null;
+            }
+        }
+    }
+
+    public class PluginUpdateHandler : MonoBehaviour
+    {
+        void Update()
+        {
+            if (Input.GetKeyDown(KeyCode.F8)) 
+            {
+                Class1.ToggleMod();
+            }
+        }
+
+        void LateUpdate() => Class1.UpdateTick();
+    }
+}

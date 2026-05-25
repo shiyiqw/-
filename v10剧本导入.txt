@@ -1,0 +1,165 @@
+using BepInEx;
+using BepInEx.Unity.IL2CPP;
+using HarmonyLib;
+using Utage;
+using UnityEngine;
+using System;
+using System.IO;
+using System.Text;
+using System.Collections.Generic;
+using Il2CppInterop.Runtime;
+
+namespace UtageStoryFinalInjector
+{
+    [BepInPlugin(MyPluginInfo.PLUGIN_GUID, MyPluginInfo.PLUGIN_NAME, MyPluginInfo.PLUGIN_VERSION)]
+    public class Plugin : BasePlugin
+    {
+        public static Dictionary<string, string> CustomStoryCache = new Dictionary<string, string>();
+        public static string TargetCsvPath;
+
+        public override void Load()
+        {
+            try
+            {
+                System.Console.OutputEncoding = Encoding.UTF8;
+                System.Console.InputEncoding = Encoding.UTF8;
+            }
+            catch (Exception) { }
+
+            TargetCsvPath = Path.Combine(Paths.PluginPath, "shiyi_story.csv");
+            ParseAndLoadCustomStory();
+
+            Harmony harmony = new Harmony(MyPluginInfo.PLUGIN_GUID);
+            harmony.PatchAll();
+            UnityEngine.Debug.Log($"[DualCore] ChangeCSV");
+        }
+
+        private static void ParseAndLoadCustomStory()
+        {
+            if (!File.Exists(TargetCsvPath)) return;
+            try
+            {
+                CustomStoryCache.Clear();
+                string currentSheetName = null;
+                StringBuilder sheetBuilder = new StringBuilder();
+
+                var lines = File.ReadLines(TargetCsvPath, Encoding.UTF8);
+                foreach (var line in lines)
+                {
+                    if (line.StartsWith("#SHEET_NAME", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (!string.IsNullOrEmpty(currentSheetName) && sheetBuilder.Length > 0)
+                        {
+                            CustomStoryCache[currentSheetName] = sheetBuilder.ToString();
+                        }
+
+                        string[] parts = line.Split(',');
+                        if (parts.Length > 1)
+                        {
+                            currentSheetName = parts[1].Trim();
+                            sheetBuilder.Clear();
+                        }
+                        continue;
+                    }
+
+                    if (!string.IsNullOrEmpty(currentSheetName))
+                    {
+                        sheetBuilder.AppendLine(line);
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(currentSheetName) && sheetBuilder.Length > 0)
+                {
+                    CustomStoryCache[currentSheetName] = sheetBuilder.ToString();
+                }
+                UnityEngine.Debug.Log($"Re，Analysis表数: {CustomStoryCache.Count}");
+            }
+            catch (Exception ex) { UnityEngine.Debug.LogError(ex.Message); }
+        }
+    }
+
+    [HarmonyPatch(typeof(AdvChapterData), nameof(AdvChapterData.AddScenario))]
+    public class Patch_DualCoreHijack
+    {
+        private static bool hasCreatedNewChapters = false;
+        [HarmonyPrefix]
+        public static bool Prefix(AdvChapterData __instance, Il2CppSystem.Collections.Generic.Dictionary<string, AdvScenarioData> scenarioDataTbl)
+        {
+            if (__instance == null || __instance.DataList == null) return true;
+            if (hasCreatedNewChapters) return true;
+
+            try
+            {
+                var dataManager = UnityEngine.Object.FindObjectOfType<AdvDataManager>();
+                if (dataManager == null) return true;
+
+                var settingData = dataManager.SettingDataManager;
+                var macroManager = dataManager.MacroManager;
+                var targetBook = __instance.DataList[0];
+                if (targetBook != null && targetBook.ImportGridList != null)
+                {
+                    foreach (var kvp in Plugin.CustomStoryCache)
+                    {
+                        string sheetName = kvp.Key;
+                        if (sheetName == "新的开始" || sheetName == "shiyi_new_plot")
+                        {
+                            var rawGrid = new StringGrid(sheetName, CsvType.Csv, kvp.Value);
+                            var newSheet = new AdvImportScenarioSheet(rawGrid, settingData, macroManager);
+
+                            targetBook.ImportGridList.Add(newSheet);
+                            UnityEngine.Debug.Log($"CreatSuccessful[{sheetName}]");
+                        }
+                    }
+                    hasCreatedNewChapters = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                UnityEngine.Debug.LogError($"[Engine-A] CreatErrors: {ex.Message}");
+            }
+            return true;
+        }
+        [HarmonyPostfix]
+        public static void Postfix(AdvChapterData __instance, Il2CppSystem.Collections.Generic.Dictionary<string, AdvScenarioData> scenarioDataTbl)
+        {
+            if (scenarioDataTbl == null) return;
+
+            foreach (var kvp in Plugin.CustomStoryCache)
+            {
+                string targetSheetName = kvp.Key;
+                string newCsvText = kvp.Value;
+                if (targetSheetName == "新的开始" || targetSheetName == "shiyi_new_plot") continue;
+
+                if (scenarioDataTbl.ContainsKey(targetSheetName))
+                {
+                    try
+                    {
+                        var originalScenarioData = scenarioDataTbl[targetSheetName];
+                        if (originalScenarioData == null || originalScenarioData.DataGrid == null) continue;
+
+                        var myNewGrid = new StringGrid(targetSheetName, CsvType.Csv, newCsvText);
+                        var targetSheet = originalScenarioData.DataGrid;
+                        targetSheet.Rows.Clear();
+                        for (int i = 0; i < myNewGrid.Rows.Count; i++)
+                        {
+                            targetSheet.Rows.Add(myNewGrid.Rows[i]);
+                        }
+
+                        UnityEngine.Debug.Log($" [{targetSheetName}]替换");
+                    }
+                    catch (Exception ex)
+                    {
+                        UnityEngine.Debug.LogError($"Error{ex.Message}");
+                    }
+                }
+            }
+        }
+    }
+
+    public static class MyPluginInfo
+    {
+        public const string PLUGIN_GUID = "com.shiyimv.utage_dualcore_injector";
+        public const string PLUGIN_NAME = "Utage Dual Core Injector";
+        public const string PLUGIN_VERSION = "11.0.0";
+    }
+}

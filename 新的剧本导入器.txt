@@ -1,0 +1,145 @@
+using BepInEx;
+using BepInEx.Unity.IL2CPP;
+using HarmonyLib;
+using Utage;
+using System;
+using System.IO;
+using System.Text;
+using System.Collections.Generic;
+
+namespace UtageCsvInjectorPlugin
+{
+    [BepInPlugin("com.shiyimv.utage_csv_injector", "Utage CSV Script Injector", "1.4.0")]
+    public class Plugin : BasePlugin 
+    {
+        // 【升级】核心缓存：Key 是表名，Value 是切分好的“行与格子”的列表 List<string[]>
+        public static Dictionary<string, List<string[]>> CustomSheetsCache = new Dictionary<string, List<string[]>>();
+        public static string DumpFilePath;
+
+        public override void Load() 
+        {
+            System.Console.OutputEncoding = System.Text.Encoding.UTF8;
+            System.Console.InputEncoding = System.Text.Encoding.UTF8;
+            DumpFilePath = Path.Combine(Paths.PluginPath, "ScenarioDump.csv");
+            LoadScenarioDump();
+            
+            Harmony harmony = new Harmony("com.shiyimv.utage_csv_injector");
+            harmony.PatchAll();
+        }
+
+        public static void LoadScenarioDump()
+        {
+            try
+            {
+                if (!File.Exists(DumpFilePath)) return;
+                CustomSheetsCache.Clear();
+                
+                string currentSheetName = null;
+                List<string[]> currentRows = new List<string[]>();
+                string[] lines = File.ReadAllLines(DumpFilePath, Encoding.UTF8);
+
+                foreach (var line in lines)
+                {
+                    if (string.IsNullOrEmpty(line) || line.Trim().Length == 0) continue;
+
+                    if (line.StartsWith("#SHEET_NAME", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (!string.IsNullOrEmpty(currentSheetName) && currentRows.Count > 0)
+                        {
+                            CustomSheetsCache[currentSheetName] = new List<string[]>(currentRows);
+                        }
+
+                        string[] parts = line.Split(',');
+                        if (parts.Length > 1)
+                        {
+                            currentSheetName = parts[1].Trim();
+                            currentRows.Clear();
+                        }
+                        continue;
+                    }
+
+                    if (!string.IsNullOrEmpty(currentSheetName))
+                    {
+                        // 将每一行用逗号切分成格子数组存入
+                        string[] cells = line.Split(',');
+                        currentRows.Add(cells);
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(currentSheetName) && currentRows.Count > 0)
+                {
+                    CustomSheetsCache[currentSheetName] = new List<string[]>(currentRows);
+                }
+
+                UnityEngine.Debug.Log($"[Mod] 成功载入自定义剧本，共成功缓存了 {CustomSheetsCache.Count} 张工作表。");
+            }
+            catch (Exception ex)
+            {
+                UnityEngine.Debug.LogError($"[Mod] 载入剧本文件失败: {ex.Message}");
+            }
+        }
+    }
+
+    // ==================== 终极数据行（Rows）拦截劫持补丁 ====================
+
+    [HarmonyPatch(typeof(StringGrid), nameof(StringGrid.Rows), MethodType.Getter)]
+    public class UtageStringGrid_Rows_Patch
+    {
+        // 记忆集合：防止对同一个 StringGrid 实例重复注入，也用于防止递归死循环
+        private static HashSet<IntPtr> processedGrids = new HashSet<IntPtr>();
+
+        [HarmonyPrefix]
+        public static void Prefix(StringGrid __instance)
+        {
+            if (__instance == null || __instance.Pointer == IntPtr.Zero) return;
+
+            IntPtr gridPtr = __instance.Pointer;
+            // 如果这个实例已经注入过了，直接放行
+            if (processedGrids.Contains(gridPtr)) return;
+
+            string sheetName = __instance.SheetName;
+            if (string.IsNullOrEmpty(sheetName)) return;
+
+            // 检查当前请求 Rows 的表是否在我们 Mod 的劫持名单里
+            if (Plugin.CustomSheetsCache.TryGetValue(sheetName, out var customRows))
+            {
+                // 立即记录指针，防止 AddRow 内部隐式调用 Rows 导致死循环
+                processedGrids.Add(gridPtr);
+
+                UnityEngine.Debug.Log($"[Mod-Debug] 🎯 核心武器触发！检测到游戏正在请求剧情表 [{sheetName}] 的行数据，开始动态解构并注入长剧本...");
+
+                try
+                {
+                    // 1. 清空原版自带的、被死死限制住的旧 Rows 列表
+                    if (__instance.rows != null)
+                    {
+                        __instance.rows.Clear();
+                    }
+                    else
+                    {
+                        __instance.rows = new Il2CppSystem.Collections.Generic.List<StringGridRow>();
+                    }
+
+                    // 2. 将我们 Mod 缓存里的长剧本行数据，一行行灌入引擎
+                    foreach (var rowData in customRows)
+                    {
+                        // 将标准的 string[] 转换为 IL2CPP 能够识别的包装数组
+                        var il2cppArray = new Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppStringArray(rowData);
+                        
+                        // 调用原版的 AddRow 建立合法合规的 StringGridRow 内存对象
+                        __instance.AddRow(il2cppArray);
+                    }
+
+                    // 3. 灌完新数据后，强制让当前表重新解析一次表头结构，刷新列索引字典
+                    __instance.ParseHeader();
+
+                    UnityEngine.Debug.Log($"[Mod-Debug] 🎯 剧情表 [{sheetName}] 动态掉包成功！新剧情总行数: {__instance.rows.Count} 行。原版退出逻辑已被彻底覆盖。");
+                }
+                catch (Exception ex)
+                {
+                    UnityEngine.Debug.LogError($"[Mod-Debug] 动态注入行数据时发生异常: {ex.Message}");
+                }
+            }
+        }
+    }
+}
